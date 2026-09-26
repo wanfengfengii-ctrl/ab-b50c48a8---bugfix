@@ -154,6 +154,34 @@ def test_plan_blocked_when_audit_fails_is_still_200():
     assert f["cut"]["capacity"] == 90
 
 
+def test_plan_blocked_by_tiny_real_deficit():
+    """单管段失效后缺口 5e-10（100.0 < 100.0000000005）也是真实缺口：
+
+    整体 passed=false、plans=null，并保留按录入顺序的首条失效管段
+    及其割集证据；不得再生成未达到需求的配流单。
+    """
+    payload = PLAN_PASS_PAYLOAD | {
+        "required_flow": 100.0000000005,
+        "edges": [dict(e, cost=1) for e in PLAN_PASS_PAYLOAD["edges"]],
+    }
+    r = client.post("/api/plan", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["passed"] is False
+    assert body["plans"] is None
+    # 正常网络仍达标；四个单管段失效情形均不达标
+    assert body["audit"]["normal"]["meets"] is True
+    assert [s["meets"] for s in body["audit"]["scenarios"]] == [False] * 4
+    f = body["audit"]["failure"]
+    assert f["stage"] == "single_failure"
+    assert f["position"] == 1 and f["edge_id"] == "E1"
+    assert f["max_flow"] == 100
+    assert f["cut"]["capacity"] == 100 == f["max_flow"]
+    assert "S" in f["cut"]["source_side_nodes"]
+    assert "T" in f["cut"]["sink_side_nodes"]
+    assert len(f["cut"]["cut_edges"]) >= 1
+
+
 def test_plan_missing_cost_400():
     r = client.post("/api/plan", json=PASS_PAYLOAD)  # 审计载荷没有 cost
     assert r.status_code == 400

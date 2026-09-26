@@ -50,6 +50,43 @@ def test_shared_bottleneck_not_path_count():
     assert r["failure"]["cut"]["capacity"] == 50
 
 
+def test_tiny_real_deficit_not_passed():
+    """微小但真实的容量缺口（5e-10，小于旧容差 1e-9）不得放行。
+
+    两条 100 干线并联，事故要求 100.0000000005：任一管段失效后只剩
+    一条容量 100 的完整干线，最大可导排量严格小于需求，必须判不达标。
+    """
+    r = audit_network(source="S", sink="T", nodes=["A", "B"],
+                      edges=_base_edges(), required_flow=100.0000000005)
+    # 正常网络 200 达标；任一单管段失效后只剩 100，严格低于要求
+    assert r["normal"]["max_flow"] == 200
+    assert r["normal"]["meets"] is True
+    assert len(r["scenarios"]) == 4
+    assert all(s["max_flow"] == 100 and s["meets"] is False for s in r["scenarios"])
+    assert r["passed"] is False
+    # 按录入顺序的首条失效管段及割集证据仍然保留
+    f = r["failure"]
+    assert f["stage"] == "single_failure"
+    assert f["position"] == 1 and f["edge_id"] == "E1"
+    assert f["max_flow"] == 100
+    assert f["cut"]["capacity"] == 100 == f["max_flow"]  # 最大流 = 最小割
+    assert "S" in f["cut"]["source_side_nodes"]
+    assert "T" in f["cut"]["sink_side_nodes"]
+    assert len(f["cut"]["cut_edges"]) >= 1
+
+
+def test_float_rounding_noise_still_tolerated():
+    """浮点累加噪声不是真实缺口：0.1+0.7 的尾差不得误判为不达标。"""
+    edges = [
+        {"id": "E1", "from": "S", "to": "T", "capacity": 0.1, "maintainable": False},
+        {"id": "E2", "from": "S", "to": "T", "capacity": 0.7, "maintainable": False},
+    ]
+    # 0.1 + 0.7 = 0.7999999999999999（机器精度尾差），真实最大流即 0.8
+    r = audit_network(source="S", sink="T", nodes=[], edges=edges, required_flow=0.8)
+    assert r["passed"] is True
+    assert r["normal"]["meets"] is True
+
+
 def test_first_failing_edge_by_input_order_and_cut():
     """首条失效管段按录入顺序；割集容量等于该情景最大流。"""
     edges = [

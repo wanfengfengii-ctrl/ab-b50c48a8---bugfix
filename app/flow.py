@@ -25,6 +25,12 @@ sys.setrecursionlimit(100_000)
 
 EPS = 1e-9
 
+# 达标判定的相对容差：仅吸收最大流浮点累加的机器精度噪声（数倍 ULP，
+# ≈1e-16 相对量级）。任何真实容量缺口——哪怕远小于 EPS——都必须判定
+# 为不达标，不得被容差吞掉（如残余网络最大可导排 100.0 而事故要求
+# 100.0000000005，缺口 5e-10 是真实缺口，不能放行）。
+MEETS_REL_TOL = 1e-12
+
 
 class NetworkValidationError(ValueError):
     """网络输入无效（节点引用、容量、方向等业务校验失败）。"""
@@ -250,6 +256,8 @@ def audit_validated_draft(draft: dict) -> dict:
     all_nodes = draft["all_nodes"]
     index_of = draft["index_of"]
 
+    import math
+
     def _solve(removed_index: Optional[int]) -> tuple[float, dict]:
         """在一张**全新**的网络上独立求最大流，并返回流量与最小割证据。"""
         dinic = Dinic(len(all_nodes))
@@ -287,7 +295,12 @@ def audit_validated_draft(draft: dict) -> dict:
         }
 
     def _meets(value: float) -> bool:
-        return value + EPS >= required_flow
+        # 严格判定：最大可导排量低于事故要求流量即不达标。
+        # 仅以 1e-12 相对容差吸收浮点累加噪声（如 0.1+0.7 的尾差），
+        # 不再用 EPS=1e-9 的绝对容差，避免吞掉真实但微小的容量缺口。
+        return value >= required_flow or math.isclose(
+            value, required_flow, rel_tol=MEETS_REL_TOL, abs_tol=0.0
+        )
 
     # 1) 正常网络
     normal_value, normal_cut = _solve(None)

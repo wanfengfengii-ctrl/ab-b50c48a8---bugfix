@@ -201,6 +201,27 @@ def test_blocked_when_normal_network_insufficient():
     assert r["audit"]["failure"]["stage"] == "normal"
 
 
+def test_blocked_by_tiny_real_deficit():
+    """单管段失效后最大可导排 100.0 < 要求 100.0000000005（缺口 5e-10）：
+
+    微小但真实的容量缺口不得放行——整体 passed=false、plans=null，
+    保留按录入顺序的首条失效管段及其割集证据。
+    """
+    kw = _parallel_pass([1, 1, 1, 1])
+    kw["required_flow"] = 100.0000000005
+    r = plan_low_exposure(**kw)
+    assert r["passed"] is False
+    assert r["plans"] is None
+    f = r["audit"]["failure"]
+    assert f["stage"] == "single_failure"
+    assert f["position"] == 1 and f["edge_id"] == "E1"
+    assert f["max_flow"] == 100
+    assert f["cut"]["capacity"] == 100 == f["max_flow"]
+    assert "S" in f["cut"]["source_side_nodes"]
+    assert "T" in f["cut"]["sink_side_nodes"]
+    assert f["cut"]["cut_edges"]
+
+
 def test_plan_per_scenario_independent():
     """每个情形在独立残余网络上求解，互不串流量。"""
     kw = _parallel_pass([2, 2, 1, 1])  # B 干线更便宜
