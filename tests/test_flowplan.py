@@ -164,6 +164,27 @@ def test_cheapest_bottleneck_forced_flow_not_reduced():
     assert flows == [30, 20]
 
 
+def test_tiny_capacity_gap_blocks_plan():
+    """单管段失效后 100 < 需求 100.0000000005：微小真实缺口也不放行配流单。"""
+    kw = _parallel_pass([1, 1, 1, 1])
+    kw["required_flow"] = 100.0000000005
+    r = plan_low_exposure(**kw)
+    assert r["passed"] is False
+    assert r["plans"] is None
+    f = r["audit"]["failure"]
+    assert f["stage"] == "single_failure"
+    assert f["position"] == 1 and f["edge_id"] == "E1"
+    assert f["max_flow"] == 100.0
+    assert f["cut"]["capacity"] == 100
+    # 需求恰好等于单干线容量时仍正常放行，配流语义不变
+    kw_exact = _parallel_pass([1, 1, 1, 1])
+    kw_exact["required_flow"] = 100
+    r2 = plan_low_exposure(**kw_exact)
+    assert r2["passed"] is True
+    assert [p["scenario"] for p in r2["plans"]] == [0, 1, 2, 3, 4]
+    assert all(p["flow_value"] == 100 for p in r2["plans"])
+
+
 def test_blocked_when_audit_does_not_pass():
     """草稿不放行：不得生成配流单，继续给出首条失效管段与割集证据。"""
     kw = {

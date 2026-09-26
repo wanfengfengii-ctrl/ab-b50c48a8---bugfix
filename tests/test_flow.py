@@ -81,6 +81,55 @@ def test_first_failing_edge_by_input_order_and_cut():
     assert r["scenarios"][2]["meets"] is True
 
 
+def test_tiny_capacity_gap_below_epsilon_is_not_waived():
+    """微小但真实的容量缺口（5e-10）不得被算法容差放行。
+
+    两条 100 干线并联，需求 100.0000000005：正常网络可导 200，
+    但任一单管段失效后只剩一条 100 干线，严格小于需求，必须判
+    不达标，并按录入顺序保留首条失效管段与割集证据。
+    """
+    r = audit_network(source="S", sink="T", nodes=["A", "B"],
+                      edges=_base_edges(), required_flow=100.0000000005)
+    assert r["passed"] is False
+    assert r["normal"]["meets"] is True  # 正常网络 200 ≥ 需求
+    # 四个单点失效情景残余最大流都是 100，严格小于需求
+    assert all(s["max_flow"] == 100 and s["meets"] is False for s in r["scenarios"])
+    f = r["failure"]
+    assert f["stage"] == "single_failure"
+    assert f["position"] == 1 and f["edge_id"] == "E1"  # 录入顺序首条
+    assert f["max_flow"] == 100.0
+    # 注：required_flow 经 _num 展示规整为 100.0（既有展示语义），
+    # 放行判定仍以提交的精确值 100.0000000005 为准
+    cut = f["cut"]
+    assert cut["capacity"] == 100 == f["max_flow"]
+    assert "S" in cut["source_side_nodes"]
+    assert "T" in cut["sink_side_nodes"]
+    assert cut["cut_edges"]
+
+
+def test_exact_requirement_still_passes():
+    """边界对照：需求恰好等于单干线容量 100 时继续放行（无真实缺口）。"""
+    r = audit_network(source="S", sink="T", nodes=["A", "B"],
+                      edges=_base_edges(), required_flow=100)
+    assert r["passed"] is True
+    assert all(s["meets"] for s in r["scenarios"])
+
+
+def test_meets_tolerance_only_absorbs_float_rounding():
+    """达标容差只吸收浮点舍入尾差（约 1e-16 量级），不放宽真实缺口。"""
+    edges = [
+        {"id": "E1", "from": "S", "to": "T", "capacity": 0.1, "maintainable": False},
+        {"id": "E2", "from": "S", "to": "T", "capacity": 0.7, "maintainable": False},
+    ]
+    # 0.1 + 0.7 的浮点结果相对 0.8 仅有约 1e-17 尾差，仍应判达标
+    r = audit_network(source="S", sink="T", nodes=[], edges=edges, required_flow=0.8)
+    assert r["passed"] is True
+    # 同样小量级的真实缺口（需求多出 5e-10）必须判不达标
+    r2 = audit_network(source="S", sink="T", nodes=[], edges=edges, required_flow=0.8000000005)
+    assert r2["passed"] is False
+    assert r2["failure"]["stage"] == "normal"
+
+
 def test_direction_is_enforced():
     """方向不可逆向：T→S 的边不能用来从 S 导流到 T。"""
     edges = [

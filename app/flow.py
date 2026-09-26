@@ -25,6 +25,13 @@ sys.setrecursionlimit(100_000)
 
 EPS = 1e-9
 
+# 达标判定容差（相对）：仅吸收最大流求解的浮点舍入尾差。
+# 与 Dinic 的增广遍历阈值 EPS 严格区分：EPS 是算法内部的残余容量
+# 截断，而本容差用于“最大可导排量是否达到必须持续排出量”的业务
+# 判定。任何真实容量缺口——哪怕只有 5e-10——都必须判为不达标，
+# 不得被容差放行。
+MEETS_RTOL = 1e-12
+
 
 class NetworkValidationError(ValueError):
     """网络输入无效（节点引用、容量、方向等业务校验失败）。"""
@@ -287,7 +294,9 @@ def audit_validated_draft(draft: dict) -> dict:
         }
 
     def _meets(value: float) -> bool:
-        return value + EPS >= required_flow
+        # 严格达标：容差仅按浮点尾差量级（相对 1e-12）吸收舍入误差，
+        # 最大可导排量严格小于必须持续排出量时一律判为不达标。
+        return value + MEETS_RTOL * max(1.0, abs(required_flow)) >= required_flow
 
     # 1) 正常网络
     normal_value, normal_cut = _solve(None)

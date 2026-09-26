@@ -154,6 +154,39 @@ def test_plan_blocked_when_audit_fails_is_still_200():
     assert f["cut"]["capacity"] == 90
 
 
+def test_plan_tiny_capacity_gap_not_waived():
+    """微小但真实的容量缺口（需求 100.0000000005，单干线仅 100）不得放行。"""
+    payload = {
+        "source": "S",
+        "sink": "T",
+        "required_flow": 100.0000000005,
+        "nodes": ["A", "B"],
+        "edges": [
+            dict(e, cost=1) for e in (
+                {"id": "E1", "from": "S", "to": "A", "capacity": 100, "maintainable": True},
+                {"id": "E2", "from": "A", "to": "T", "capacity": 100, "maintainable": True},
+                {"id": "E3", "from": "S", "to": "B", "capacity": 100, "maintainable": True},
+                {"id": "E4", "from": "B", "to": "T", "capacity": 100, "maintainable": True},
+            )
+        ],
+    }
+    r = client.post("/api/plan", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["passed"] is False
+    assert body["plans"] is None
+    assert body["audit"]["passed"] is False
+    f = body["audit"]["failure"]
+    assert f["position"] == 1 and f["edge_id"] == "E1"
+    assert f["max_flow"] == 100.0
+    assert f["cut"]["capacity"] == 100
+    # 同一微小缺口在 /api/audit 上同样不放行
+    r2 = client.post("/api/audit", json={k: v for k, v in payload.items() if k != "edges"} | {
+        "edges": [{k: v for k, v in e.items() if k != "cost"} for e in payload["edges"]]
+    })
+    assert r2.json()["passed"] is False
+
+
 def test_plan_missing_cost_400():
     r = client.post("/api/plan", json=PASS_PAYLOAD)  # 审计载荷没有 cost
     assert r.status_code == 400
